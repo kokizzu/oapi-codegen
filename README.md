@@ -2135,12 +2135,12 @@ You can see this in more detail in [the example code](examples/extensions/xgotyp
 
 </td>
 <td>
-Override the generated name of a type
+Override the generated name of a field or a type
 </td>
 <td>
 <details>
 
-By default, `oapi-codegen` will attempt to generate the name of types in as best a way it can.
+By default, `oapi-codegen` will attempt to generate the name of fields and types in as best a way it can.
 
 However, sometimes, the name doesn't quite fit what your codebase standards are, or the intent of the field, so you can override it with `x-go-name`.
 
@@ -2173,7 +2173,7 @@ components:
           type: string
         id:
           type: number
-	  # or on a field
+          # or on a field
           x-go-name: AccountIdentifier
 ```
 
@@ -2194,6 +2194,82 @@ type ClientRenamedByExtension struct {
 ```
 
 You can see this in more detail in [the example code](examples/extensions/xgoname/).
+
+</details>
+</td>
+</tr>
+
+<tr>
+<td>
+
+`x-go-type-name`
+
+</td>
+<td>
+Override the generated name of a type
+</td>
+<td>
+<details>
+
+> [!NOTE]
+> Notice that this is subtly different to the `x-go-name`, which also applies to _fields_ within `struct`s.
+
+By default, `oapi-codegen` will attempt to generate the name of types in as best a way it can.
+
+However, sometimes, the name doesn't quite fit what your codebase standards are, or the intent of the field, so you can override it with `x-go-name`.
+
+We can see this at play with the following schemas:
+
+```yaml
+openapi: "3.0.0"
+info:
+  version: 1.0.0
+  title: x-go-type-name
+components:
+  schemas:
+    Client:
+      type: object
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        id:
+          type: number
+    ClientWithExtension:
+      type: object
+      x-go-type-name: ClientRenamedByExtension
+      required:
+        - name
+      properties:
+        name:
+          type: string
+        id:
+          type: number
+          # NOTE attempting a `x-go-type-name` here is a no-op, as we're not producing a _type_ only a _field_
+          x-go-type-name: ThisWillNotBeUsed
+```
+
+From here, we now get two different models and a type alias:
+
+```go
+// Client defines model for Client.
+type Client struct {
+	Id   *float32 `json:"id,omitempty"`
+	Name string   `json:"name"`
+}
+
+// ClientWithExtension defines model for ClientWithExtension.
+type ClientWithExtension = ClientRenamedByExtension
+
+// ClientRenamedByExtension defines model for .
+type ClientRenamedByExtension struct {
+	Id   *float32 `json:"id,omitempty"`
+	Name string   `json:"name"`
+}
+```
+
+You can see this in more detail in [the example code](examples/extensions/xgotypename/).
 
 </details>
 </td>
@@ -2383,7 +2459,7 @@ components:
       type: object
       required:
         - name
-	- id
+        - id
       properties:
         name:
           type: string
@@ -2393,7 +2469,7 @@ components:
       type: object
       required:
         - name
-	- id
+        - id
       properties:
         name:
           type: string
@@ -3265,6 +3341,211 @@ func (a Thing) MarshalJSON() ([]byte, error) {
 
 </details>
 
+## Changing the names of generated types
+
+As of `oapi-codegen` v2.2.0, it is now possible to use the `output-options` configuration's `name-normalizer` to define the logic for how to convert an OpenAPI name (i.e. an Operation ID or a Schema name) and construct a Go type name.
+
+<details>
+
+<summary>Example, using default configuration</summary>
+
+By default, `oapi-codegen` will perform camel-case conversion, so for a spec such as:
+
+```yaml
+openapi: "3.0.0"
+info:
+  version: 1.0.0
+  title: Example code for the `name-normalizer` output option
+paths:
+  /api/pets/{petId}:
+    get:
+      summary: Get pet given identifier.
+      operationId: getHttpPet
+      parameters:
+      - name: petId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: valid pet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+components:
+  schemas:
+    Pet:
+      type: object
+      required:
+        - uuid
+        - name
+      properties:
+        uuid:
+          type: string
+          description: The pet uuid.
+        name:
+          type: string
+          description: The name of the pet.
+    Error:
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          format: int32
+          description: Error code
+        message:
+          type: string
+          description: Error message
+    OneOf2things:
+      description: "Notice that the `things` is not capitalised"
+      oneOf:
+        - type: object
+          required:
+            - id
+          properties:
+            id:
+              type: integer
+        - type: object
+          required:
+            - id
+          properties:
+            id:
+              type: string
+              format: uuid
+```
+
+This will produce:
+
+```go
+// OneOf2things Notice that the `things` is not capitalised
+type OneOf2things struct {
+	union json.RawMessage
+}
+
+// Pet defines model for Pet.
+type Pet struct {
+	// Name The name of the pet.
+	Name string `json:"name"`
+
+	// Uuid The pet uuid.
+	Uuid string `json:"uuid"`
+}
+
+// The interface specification for the client above.
+type ClientInterface interface {
+	// GetHttpPet request
+	GetHttpPet(ctx context.Context, petId string, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+```
+
+</details>
+
+<details>
+
+<summary>Example, using <code>ToCamelCaseWithInitialisms</code></summary>
+
+By default, `oapi-codegen` will perform camel-case conversion, so for a spec such as:
+
+```yaml
+openapi: "3.0.0"
+info:
+  version: 1.0.0
+  title: Example code for the `name-normalizer` output option
+paths:
+  /api/pets/{petId}:
+    get:
+      summary: Get pet given identifier.
+      operationId: getHttpPet
+      parameters:
+      - name: petId
+        in: path
+        required: true
+        schema:
+          type: string
+      responses:
+        '200':
+          description: valid pet
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/Pet'
+components:
+  schemas:
+    Pet:
+      type: object
+      required:
+        - uuid
+        - name
+      properties:
+        uuid:
+          type: string
+          description: The pet uuid.
+        name:
+          type: string
+          description: The name of the pet.
+    Error:
+      required:
+        - code
+        - message
+      properties:
+        code:
+          type: integer
+          format: int32
+          description: Error code
+        message:
+          type: string
+          description: Error message
+    OneOf2things:
+      description: "Notice that the `things` is not capitalised"
+      oneOf:
+        - type: object
+          required:
+            - id
+          properties:
+            id:
+              type: integer
+        - type: object
+          required:
+            - id
+          properties:
+            id:
+              type: string
+              format: uuid
+```
+
+This will produce:
+
+```go
+// OneOf2things Notice that the `things` is not capitalised
+type OneOf2things struct {
+	union json.RawMessage
+}
+
+// Pet defines model for Pet.
+type Pet struct {
+	// Name The name of the pet.
+	Name string `json:"name"`
+
+	// UUID The pet uuid.
+	UUID string `json:"uuid"`
+}
+
+// The interface specification for the client above.
+type ClientInterface interface {
+	// GetHTTPPet request
+	GetHTTPPet(ctx context.Context, petID string, reqEditors ...RequestEditorFn) (*http.Response, error)
+}
+```
+
+</details>
+
+
+For more details of what the resulting code looks like, check out [the test cases](internal/test/outputoptions/name-normalizer/).
+
 ## Examples
 
 The [examples directory](examples) contains some additional cases which are useful examples for how to use `oapi-codegen`, including how you'd take the Petstore API and implement it with `oapi-codegen`.
@@ -3597,3 +3878,25 @@ The [kin-openapi](https://github.com/getkin/kin-openapi) project - which we 💜
 This may lead to breakage in your consuming code, and if so, sorry that's happened!
 
 We'll be aware of the issue, and will work to update both the core `oapi-codegen` and the middlewares accordingly.
+
+## Sponsors
+
+For the most part, `oapi-codegen` is maintained in two busy peoples' free time. As noted in [Creating a more sustainable model for `oapi-codegen` in the future](https://github.com/deepmap/oapi-codegen/discussions/1606), we're looking to make this a more sustainable project in the future.
+
+We're very appreciative of [the many contributors over the years](https://github.com/deepmap/oapi-codegen/graphs/contributors) and the ongoing use of the project 💜
+
+Please consider sponsoring us through GitHub Sponsors either [on the organisation](https://github.com/sponsors/oapi-codegen/) or [directly for Jamie](https://github.com/sponsors/jamietanna/), which helps work towards us being able to maintain the project long term.
+
+See [this blog post from Tidelift](https://blog.tidelift.com/paying-maintainers-the-howto) for more details on how to talk to your company about sponsoring maintainers of (Open Source) projects you depend on.
+
+We are currently generously sponsored by the following folks, each of whom provide sponsorship for 1 hour of work a month:
+
+<p align="center">
+	<a href="https://devzero.io?utm_source=oapi-codegen+repo&utm_medium=github+sponsorship">
+		<picture>
+		  <source media="(prefers-color-scheme: light)" srcset=".github/sponsors/devzero-light.svg">
+		  <source media="(prefers-color-scheme: dark)" srcset=".github/sponsors/devzero-dark.svg">
+		  <img alt="DevZero logo" src=".github/sponsors/devzero-dark.svg" height="100px">
+		</picture>
+	</a>
+</p>
